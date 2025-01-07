@@ -10,12 +10,10 @@ class BurnEditor : ScalingRenderer {
   public BurnEditor(PrincipiaPluginAdapter adapter,
                     Vessel vessel,
                     double initial_time,
-                    int index,
                     Func<int, BurnEditor> get_burn_at_index) {
     adapter_ = adapter;
     vessel_ = vessel;
     initial_time_ = initial_time;
-    this.index = index;
     get_burn_at_index_ = get_burn_at_index;
     Δv_tangent_ = new DifferentialSlider(
         label            : L10N.CacheFormat("#Principia_BurnEditor_ΔvTangent"),
@@ -61,12 +59,32 @@ class BurnEditor : ScalingRenderer {
         field_width      : 7){
         value            = initial_time_ - time_base
     };
-    reference_frame_selector_ = new ReferenceFrameSelector(
-        adapter_,
-        ReferenceFrameChanged,
-        L10N.CacheFormat("#Principia_BurnEditor_ManœuvringFrame"));
-    reference_frame_selector_.SetFrameParameters(
-        adapter_.plotting_frame_selector_.FrameParameters());
+    reference_frame_selector_ =
+        new ReferenceFrameSelector<NavigationFrameParameters>(
+            adapter_,
+            ReferenceFrameChanged,
+            L10N.CacheFormat("#Principia_BurnEditor_ManœuvringFrame"));
+    PlottingFrameParameters plotting_frame_parameters =
+        adapter_.plotting_frame_selector_.FrameParameters();
+    if ((NavigationFrameParameters)plotting_frame_parameters is
+        NavigationFrameParameters parameters) {
+      reference_frame_selector_.SetFrameParameters(parameters);
+    } else {
+      // If the plotting frame is not a navigation frame, it is the rotating-
+      // pulsating frame; use the corresponding rotating frame as the default
+      // navigation frame.
+      // Note that the primary for the rotating frame (the body which is fixed)
+      // is the main body of the secondary system; for instance, we go from a
+      // frame which fixes the Sun and the barycentre of the Earth-Moon system
+      // to one which fixes the Earth and the direction of the Sun.
+      reference_frame_selector_.SetFrameParameters(new NavigationFrameParameters{
+          Extension = FrameType.BODY_CENTRED_PARENT_DIRECTION,
+          PrimaryIndices = new[]
+              { plotting_frame_parameters.SecondaryIndices[0] },
+          SecondaryIndices = new[]
+              { plotting_frame_parameters.PrimaryIndices[0] },
+      });
+    }
     ComputeEngineCharacteristics();
   }
 
@@ -78,8 +96,8 @@ class BurnEditor : ScalingRenderer {
     Maximized,
   }
 
-  // Renders the |BurnEditor|.  Returns true if and only if the settings were
-  // changed.
+  // Renders the `BurnEditor`.  Returns `Changed` if and only if the settings
+  // were changed.
   public Event Render(
       string header,
       bool anomalous,
@@ -100,8 +118,8 @@ class BurnEditor : ScalingRenderer {
                     : header);
       string info = "";
       if (!minimized &&
-          !reference_frame_selector_.FrameParameters().Equals(
-              adapter_.plotting_frame_selector_.FrameParameters())) {
+          reference_frame_selector_.FrameParameters() !=
+              adapter_.plotting_frame_selector_.FrameParameters()) {
         info = L10N.CacheFormat(
             "#Principia_BurnEditor_Info_InconsistentFrames");
       }
@@ -116,7 +134,7 @@ class BurnEditor : ScalingRenderer {
       return Event.None;
     }
     using (new UnityEngine.GUILayout.VerticalScope()) {
-      // When we are first rendered, the |initial_mass_in_tonnes_| will just have
+      // When we are first rendered, the `initial_mass_in_tonnes_` will just have
       // been set.  If we have fallen back to instant impulse, we should use this
       // mass to set the thrust.
       if (first_time_rendering_) {
@@ -182,18 +200,18 @@ class BurnEditor : ScalingRenderer {
       }
       using (new UnityEngine.GUILayout.HorizontalScope()) {
         UnityEngine.GUILayout.Label("", GUILayoutWidth(3));
-        if (decrement_revolution == null) {
-          PrincipiaPluginAdapter.LoadTextureOrDie(out decrement_revolution,
+        if (decrement_revolution_ == null) {
+          PrincipiaPluginAdapter.LoadTextureOrDie(out decrement_revolution_,
                                                   "decrement_revolution.png");
         }
-        if (increment_revolution == null) {
-          PrincipiaPluginAdapter.LoadTextureOrDie(out increment_revolution,
+        if (increment_revolution_ == null) {
+          PrincipiaPluginAdapter.LoadTextureOrDie(out increment_revolution_,
                                                   "increment_revolution.png");
         }
         if (orbital_period is double period) {
           if (UnityEngine.GUILayout.Button(
                   new UnityEngine.GUIContent(
-                      decrement_revolution,
+                      decrement_revolution_,
                       L10N.CacheFormat(
                           "#Principia_BurnEditor_DecrementRevolution") +
                       "\n(" + new PrincipiaTimeSpan(-period).Format(
@@ -206,7 +224,7 @@ class BurnEditor : ScalingRenderer {
           UnityEngine.GUILayout.Space(Width(5));
           if (UnityEngine.GUILayout.Button(
                   new UnityEngine.GUIContent(
-                      increment_revolution,
+                      increment_revolution_,
                       L10N.CacheFormat(
                           "#Principia_BurnEditor_IncrementRevolution") +
                       "\n(" + new PrincipiaTimeSpan(+period).Format(
@@ -221,16 +239,38 @@ class BurnEditor : ScalingRenderer {
           UnityEngine.GUILayout.Space(Width(5));
           UnityEngine.GUILayout.Button("", GUILayoutWidth(1));
         }
-        UnityEngine.GUILayout.Label(
-            index == 0
-                ? L10N.CacheFormat(
-                    "#Principia_BurnEditor_TimeBase_StartOfFlightPlan")
-                : L10N.CacheFormat("#Principia_BurnEditor_TimeBase_EndOfManœuvre",
-                                   index),
-            style : new UnityEngine.GUIStyle(UnityEngine.GUI.skin.label){
-                alignment = UnityEngine.TextAnchor.UpperLeft
-            });
+
+        // Display and select the time base for the manœuvre.
+        if (index == 0) {
+          UnityEngine.GUILayout.Label(
+              L10N.CacheFormat(
+                  "#Principia_BurnEditor_TimeBase_StartOfFlightPlan"),
+              style : new UnityEngine.GUIStyle(UnityEngine.GUI.skin.label){
+                  alignment = UnityEngine.TextAnchor.UpperRight
+              });
+        } else {
+          using (new UnityEngine.GUILayout.HorizontalScope()) {
+            UnityEngine.GUILayout.Label(
+                L10N.CacheFormat("#Principia_BurnEditor_TimeBase"),
+                style : new UnityEngine.GUIStyle(UnityEngine.GUI.skin.label){
+                    alignment = UnityEngine.TextAnchor.UpperRight
+                });
+            string button_text = time_base_is_start_of_flight_plan_
+                                     ? L10N.CacheFormat(
+                                         "#Principia_BurnEditor_StartOfFlightPlan")
+                                     : L10N.CacheFormat(
+                                         "#Principia_BurnEditor_EndOfManœuvre",
+                                         index);
+            if (UnityEngine.GUILayout.Button(
+                    new UnityEngine.GUIContent(button_text,
+                                               "Change the time base of this manœuvre"))) {
+              time_base_is_start_of_flight_plan_ =
+                  !time_base_is_start_of_flight_plan_;
+            }
+          }
+        }
       }
+
       using (new UnityEngine.GUILayout.HorizontalScope()) {
         UnityEngine.GUILayout.Label(
             L10N.CacheFormat("#Principia_BurnEditor_Δv",
@@ -239,6 +279,23 @@ class BurnEditor : ScalingRenderer {
         UnityEngine.GUILayout.Label(L10N.CacheFormat(
                                         "#Principia_BurnEditor_Duration",
                                         duration_.ToString("0.0")));
+
+        if (adapter_.plotting_frame_selector_.
+                Centre() is CelestialBody centre) {
+          string vessel_guid = vessel_.id.ToString();
+          int optimized_index =
+              plugin.FlightPlanOptimizationDriverInProgress(vessel_guid);
+          if (optimized_index == index) {
+            UnityEngine.GUILayout.Label(
+                L10N.CacheFormat("#Principia_BurnEditor_OptimizingThis"));
+          } else if (optimized_index != -1) {
+            UnityEngine.GUILayout.Label(
+                L10N.CacheFormat("#Principia_BurnEditor_OptimizingOther"));
+          } else if (UnityEngine.GUILayout.Button(
+                         L10N.CacheFormat("#Principia_BurnEditor_Optimize"))) {
+            plugin.FlightPlanOptimizationDriverStart(vessel_guid, index);
+          }
+        }
       }
       UnityEngine.GUILayout.Label(engine_warning_,
                                   Style.Warning(UnityEngine.GUI.skin.label));
@@ -255,7 +312,7 @@ class BurnEditor : ScalingRenderer {
     }.magnitude;
   }
 
-  private void ReformatΔv() { 
+  private void ReformatΔv() {
     // Ensure that the number of digits used in formatting is consistent with
     // the current Δv values, initial mass, and engine characteristics,
     // otherwise the change in the number of significant figures will be
@@ -293,7 +350,7 @@ class BurnEditor : ScalingRenderer {
     };
   }
 
-  public void ReferenceFrameChanged(NavigationFrameParameters? parameters,
+  public void ReferenceFrameChanged(NavigationFrameParameters parameters,
                                     Vessel target_vessel) {
     changed_reference_frame_ = true;
   }
@@ -376,7 +433,7 @@ class BurnEditor : ScalingRenderer {
 
   private string FormatΔvComponent(double metres_per_second) {
     // The granularity of Instant in 1950.
-    double dt = 2.3841857910156250e-7;  // 2⁻²² s.
+    const double dt = 2.3841857910156250e-7; // 2⁻²² s.
     double initial_acceleration =
         thrust_in_kilonewtons_ / initial_mass_in_tonnes_;
     double Isp = specific_impulse_in_seconds_g0_ * 9.80665;
@@ -405,9 +462,9 @@ class BurnEditor : ScalingRenderer {
   private void UseTheForceLuke() {
     // The burn can last at most (9.80665 / scale) s.
     const double scale = 1;
-    // This, together with |scale = 1|, ensures that, when |initial_time| is
-    // less than 2 ** 32 s, |Δv(initial_time + duration)| does not overflow if
-    // Δv is less than 100 km/s, and that |initial_time + duration| does not
+    // This, together with `scale = 1`, ensures that, when `initial_time` is
+    // less than 2 ** 32 s, `Δv(initial_time + duration)` does not overflow if
+    // Δv is less than 100 km/s, and that `initial_time + duration` does not
     // fully cancel if Δv is more than 1 mm/s.
     // TODO(egg): Before the C* release, add a persisted flag to indicate to the
     // user that we are not using the craft's engines (we can also use that
@@ -436,9 +493,12 @@ class BurnEditor : ScalingRenderer {
     return true;
   }
 
-  private double time_base => previous_burn?.final_time ??
-                              plugin.FlightPlanGetInitialTime(
-                                  vessel_.id.ToString());
+  private double time_base => time_base_is_start_of_flight_plan_
+                                  ? plugin.FlightPlanGetInitialTime(
+                                      vessel_.id.ToString())
+                                  : previous_burn?.final_time ??
+                                    plugin.FlightPlanGetInitialTime(
+                                        vessel_.id.ToString());
 
   public double initial_time => initial_time_;
   public double final_time => initial_time_ + duration_;
@@ -453,7 +513,8 @@ class BurnEditor : ScalingRenderer {
   private readonly DifferentialSlider Δv_normal_;
   private readonly DifferentialSlider Δv_binormal_;
   private readonly DifferentialSlider previous_coast_duration_;
-  private readonly ReferenceFrameSelector reference_frame_selector_;
+  private readonly ReferenceFrameSelector<NavigationFrameParameters>
+      reference_frame_selector_;
   private double thrust_in_kilonewtons_;
   private double specific_impulse_in_seconds_g0_;
   private double duration_;
@@ -461,6 +522,8 @@ class BurnEditor : ScalingRenderer {
   private double initial_time_;
 
   private bool first_time_rendering_ = true;
+
+  private bool time_base_is_start_of_flight_plan_ = false;
 
   private const double log10_Δv_lower_rate = -3.0;
   private const double log10_Δv_upper_rate = 3.5;
@@ -475,9 +538,9 @@ class BurnEditor : ScalingRenderer {
 
   private bool changed_reference_frame_ = false;
   private string engine_warning_ = "";
-  
-  private static UnityEngine.Texture decrement_revolution;
-  private static UnityEngine.Texture increment_revolution;
+
+  private static UnityEngine.Texture decrement_revolution_;
+  private static UnityEngine.Texture increment_revolution_;
   private const char figure_space = '\u2007';
 }
 

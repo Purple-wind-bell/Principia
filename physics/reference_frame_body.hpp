@@ -2,7 +2,11 @@
 
 #include "physics/reference_frame.hpp"
 
+#include <memory>
+
+#include "geometry/r3x3_matrix.hpp"
 #include "physics/rigid_reference_frame.hpp"
+#include "physics/rotating_pulsating_reference_frame.hpp"
 #include "quantities/elementary_functions.hpp"
 #include "quantities/si.hpp"
 
@@ -11,11 +15,10 @@ namespace physics {
 namespace _reference_frame {
 namespace internal {
 
-using namespace principia::geometry::_grassmann;
 using namespace principia::geometry::_r3x3_matrix;
 using namespace principia::physics::_rigid_reference_frame;
+using namespace principia::physics::_rotating_pulsating_reference_frame;
 using namespace principia::quantities::_elementary_functions;
-using namespace principia::quantities::_named_quantities;
 using namespace principia::quantities::_si;
 
 template<typename InertialFrame, typename ThisFrame>
@@ -45,7 +48,7 @@ ReferenceFrame<InertialFrame, ThisFrame>::FrenetFrame(
   Vector<double, ThisFrame> tangent = Normalize(velocity);
   Vector<double, ThisFrame> normal = Normalize(normal_acceleration);
   Bivector<double, ThisFrame> binormal = Wedge(tangent, normal);
-  // Maps |tangent| to {1, 0, 0}, |normal| to {0, 1, 0}, and |binormal| to
+  // Maps `tangent` to {1, 0, 0}, `normal` to {0, 1, 0}, and `binormal` to
   // {0, 0, 1}.
   return Rotation<Frenet<ThisFrame>, ThisFrame>(tangent, normal, binormal);
 }
@@ -56,8 +59,13 @@ ReferenceFrame<InertialFrame, ThisFrame>::ReadFromMessage(
     serialization::ReferenceFrame const& message,
     not_null<Ephemeris<InertialFrame> const*> const ephemeris) {
   if (message.HasExtension(
-          serialization::TwoBodyRotatingPulsatingReferenceFrame::extension)) {
-    LOG(FATAL) << "Implement";
+          serialization::RotatingPulsatingReferenceFrame::extension)) {
+    return static_cast<not_null<std::unique_ptr<ReferenceFrame>>>(
+        RotatingPulsatingReferenceFrame<InertialFrame, ThisFrame>::
+            ReadFromMessage(ephemeris,
+                            message.GetExtension(
+                                serialization::RotatingPulsatingReferenceFrame::
+                                    extension)));
   } else {
     return static_cast<not_null<std::unique_ptr<ReferenceFrame>>>(
         RigidReferenceFrame<InertialFrame, ThisFrame>::ReadFromMessage(
